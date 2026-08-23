@@ -1,4 +1,102 @@
 """
+Illustrative Blanchard-Kahn / Klein (2000) determinacy check.
+
+This script verifies that a representative 2-jump-variable,
+6-state rational expectations system satisfies the BK
+rank and order conditions.
+
+It is intended as a determinacy diagnostic and does not
+recompute the policy vectors reported in Eqs. (23)-(24).
+"""
+
+import numpy as np
+import scipy.linalg as la
+
+# ==============================================================================
+# 1. STRUCTURAL DSGE PARAMETERS
+# ==============================================================================
+beta      = 0.990   # Discount factor
+kappa     = 0.085   # NKPC slope
+sigma_eff = 1.0     # Intertemporal elasticity of substitution
+
+# Policy Rule Parameters (Taylor Principle: phi_pi > 1)
+phi_pi    = 1.500   # Response to inflation
+phi_y     = 0.125   # Response to output gap
+
+# Exogenous AR(1) persistence parameters
+rho = np.array([0.684, 0.773, 0.739, 0.900, 0.869, 0.811])
+N   = np.diag(rho)
+
+# ==============================================================================
+# 2. FULL 8x8 SYSTEM SETUP: A * E_t[S_{t+1}] = B * S_t
+# ==============================================================================
+# State vector: S_t = [pi_t, y_t, a_t, pi_US_t, p_oil_t, nu_i_t, tr_US_t, s_ship_t]'
+#
+# Structural Equations:
+# 1. NKPC:  beta * E_t[pi_{t+1}] = pi_t - kappa * y_t - D_NKPC * X_t
+# 2. IS:    E_t[y_{t+1}] + (1/sigma_eff) * E_t[pi_{t+1}] = y_t + (1/sigma_eff) * i_t - D_IS * X_t
+#    Plugging in i_t = phi_pi * pi_t + phi_y * y_t + nu_i_t:
+#    E_t[y_{t+1}] + (1/sigma_eff) * E_t[pi_{t+1}] = (1 + phi_y/sigma_eff) * y_t + (phi_pi/sigma_eff) * pi_t ...
+
+num_jump  = 2
+num_state = 6
+num_total = num_jump + num_state
+
+A = np.zeros((num_total, num_total))
+B = np.zeros((num_total, num_total))
+
+# --- Row 0: NKPC ---
+A[0, 0] = beta
+B[0, 0] = 1.0
+B[0, 1] = -kappa
+
+# --- Row 1: IS Curve with Taylor Rule ---
+A[1, 0] = 1.0 / sigma_eff
+A[1, 1] = 1.0
+B[1, 0] = phi_pi / sigma_eff
+B[1, 1] = 1.0 + (phi_y / sigma_eff)
+
+# --- Rows 2-7: Exogenous AR(1) States ---
+A[2:, 2:] = np.eye(num_state)
+B[2:, 2:] = N
+
+# ==============================================================================
+# 3. KLEIN (2000) GENERALIZED SCHUR (QZ) DECOMPOSITION
+# ==============================================================================
+# Sort eigenvalues by modulus (|lambda| > 1)
+S, T, alpha, beta_qz, Q, Z = la.ordqz(B, A, sort='lhp')
+
+# Calculate Generalized Eigenvalues: lambda_i = alpha_i / beta_i
+valid_mask = np.abs(beta_qz) > 1e-12
+gen_eigenvalues = np.full(num_total, np.inf)
+gen_eigenvalues[valid_mask] = np.abs(alpha[valid_mask] / beta_qz[valid_mask])
+
+# Separate generalized eigenvalues for endogenous core and exogenous states
+unstable_roots = np.sum(gen_eigenvalues > 1.0)
+stable_roots   = np.sum(gen_eigenvalues <= 1.0)
+
+print("=" * 70)
+print("FULL KLEIN (2000) QZ DECOMPOSITION DIAGNOSTIC")
+print("=" * 70)
+print(f"Total System Dimensions        : {num_total}")
+print(f"Forward-Looking Jump Variables  : {num_jump} (pi_t, y_t)")
+print(f"Exogenous State Variables       : {num_state}")
+print(f"Generalized Eigenvalues         :\n{np.round(np.sort(gen_eigenvalues), 4)}")
+print("-" * 70)
+print(f"Unstable Generalized Roots (> 1): {unstable_roots} (Requires exactly {num_jump})")
+print(f"Stable Generalized Roots (<= 1) : {stable_roots} (Requires exactly {num_state})")
+
+if unstable_roots == num_jump:
+    print("\nSUCCESS: Blanchard-Kahn Rank and Order Conditions are SATISFIED!")
+    print("The system possesses a UNIQUE, STABLE Rational Expectations Solution.")
+else:
+    print("\nWARNING: Blanchard-Kahn conditions failed.")
+print("=" * 70)
+
+
+
+
+"""
 Replication code for Tables 3–6 and Figure 2.
 
 IMPORTANT:
