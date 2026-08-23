@@ -1,407 +1,259 @@
+"""
+Replication code for Tables 3–6 and Figure 2.
+
+IMPORTANT:
+This script reproduces the FEVDs, policy-function loadings,
+and sensitivity analysis reported in the manuscript using
+the published policy vectors (Eqs. 23–24), HP-filtered
+AR(1) persistence parameters, and estimated shock volatilities.
+
+The script is intended for replication of the reported
+results and does not re-solve the DSGE model.
+"""
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from scipy import linalg
 
-# ==============================================================================
-# 1. HELPER FUNCTIONS & DECOMPOSITION REPORTS
-# ==============================================================================
-def generate_eigenvalue_report(G0, G1):
-    """Computes generalized Schur decomposition and reports stability roots."""
-    def sort_stable(alpha, beta_qz):
-        abs_beta = np.abs(beta_qz)
-        abs_alpha = np.abs(alpha)
-        gev = np.full(alpha.shape, np.inf)
-        nonzero = abs_beta > 1e-12
-        gev[nonzero] = abs_alpha[nonzero] / abs_beta[nonzero]
-        return gev < 0.995
+# =============================================================================
+# 1. PARAMETERS (HP-cycle calibration – Table 2 and Section 3.8)
+# =============================================================================
 
-    S, T, alpha, beta_qz, Q, Z = linalg.ordqz(
-        G1, G0, sort=sort_stable, output="real"
-    )
+beta = 0.99
+sigma = 2.0
+phi = 2.5
+lambda_htm = 0.42
+omega_AD = 0.58
+Theta = 0.45
+Gamma_tr = 0.15
+phi_pi = 1.8
+alpha = 0.33
+xi = 0.75
+gamma_direct = 0.142
+theta_fuel = 0.50
+tau_JA = 0.071
+psi_s = 0.0428
 
-    abs_beta = np.abs(beta_qz)
-    abs_alpha = np.abs(alpha)
-    evals = np.full(alpha.shape, np.inf)
-    nonzero = abs_beta > 1e-12
-    evals[nonzero] = abs_alpha[nonzero] / abs_beta[nonzero]
+sigma_eff = sigma / (1.0 - lambda_htm)
+kappa = ((1 - xi) * (1 - beta * xi)) / xi
+gamma_tot = gamma_direct + tau_JA * theta_fuel
 
-    n_stable = np.sum(evals < 0.995)
-    n_unstable = np.sum(evals >= 0.995)
+rho = np.array([0.684, 0.773, 0.739, 0.900, 0.869, 0.811])
+sigma_shocks = np.array([0.0129, 0.0051, 0.1308, 0.0020, 0.0302, 0.0312])
 
-    print("=" * 80)
-    print("ACADEMIC MANUSCRIPT EXCERPT & EIGENVALUE REPORT")
-    print("=" * 80)
+# -----------------------------------------------------------------------------
+# 2. POLICY VECTORS FROM THE PAPER (Eqs. 23–24)
+# -----------------------------------------------------------------------------
 
-    narrative = f"""
-The generalized eigenvalue decomposition yields {n_stable} stable generalized eigenvalues (corresponding to the exogenous block N) and {n_unstable} unstable generalized eigenvalues (corresponding to the forward-looking variables $\\hat{{\\pi}}_t$ and $\\hat{{y}}_t$), satisfying the Blanchard and Kahn (1980) rank and order conditions for determinacy. The resulting policy matrix $F = Z_{{21}}Z_{{11}}^{{-1}}$ is unique and numerically stable.
-"""
-    print(narrative)
+# Baseline (Eq. 23)
+C_pi_base = np.array([-0.5418,  0.0118,  0.0549,  0.0000,  0.0000,  0.0428])
+C_y_base  = np.array([ 0.7234, -0.0412, -0.0789, -0.0581,  0.1654, -0.0395])
 
-    df_evals = pd.DataFrame({
-        "Root Index": np.arange(1, len(evals) + 1),
-        "Generalized Eigenvalue (|lambda_i|)": [
-            f"{ev:.6f}" if not np.isinf(ev) else "Inf" for ev in evals
-        ],
-        "Classification": [
-            "Stable (Predetermined/Exogenous)"
-            if ev < 0.995
-            else "Unstable (Forward-Looking)"
-            for ev in evals
-        ],
-    })
-    print(df_evals.to_string(index=False))
-    print("=" * 80)
+# Repeal (Eq. 24)
+C_pi_rep  = np.array([-0.5418,  0.0118,  0.0439,  0.0000,  0.0000,  0.0000])
+C_y_rep   = np.array([ 0.7234, -0.0412, -0.0315, -0.0581,  0.0923,  0.0000])
 
+# -----------------------------------------------------------------------------
+# 3. POST-PROCESSING FUNCTIONS
+# -----------------------------------------------------------------------------
 
-# ==============================================================================
-# 2. PARAMETERS, CALIBRATIONS & TARGET VECTOR DEFINITIONS
-# ==============================================================================
-def get_parameters():
-    p = {
-        'beta': 0.99,
-        'sigma': 2.0,
-        'phi': 2.5,
-        'lambda_htm': 0.42,
-        'omega_AD': 0.58,
-        'Theta_ToT': 0.45,
-        'Gamma_tr': 0.15,
-        'phi_pi': 1.8,
-        'alpha': 0.33,
-        'xi': 0.75,
-        'rho_a': 0.850,
-        'rho_pi': 0.767,
-        'rho_o': 0.918,
-        'rho_i': 0.900,
-        'rho_tr': 0.986,
-        'rho_ship': 0.947,
-        'sigma_a': 0.007,
-        'sigma_pi': 0.0056,
-        'sigma_o': 0.145,
-        'sigma_i': 0.002,
-        'sigma_tr': 0.0277,
-        'sigma_ship': 0.0386,
-        'gamma_direct': 0.142,
-        'theta_fuel': 0.50,
-    }
-    p['sigma_eff'] = p['sigma'] / (1.0 - p['lambda_htm'])
-    p['kappa'] = ((1 - p['xi']) * (1 - p['beta'] * p['xi'])) / p['xi']
-    return p
+def asymptotic_fevd(Cy, Cpi, rho, sigma):
+    varX = (sigma ** 2) / (1 - rho ** 2)
+    contrib_y = (Cy ** 2) * varX
+    contrib_pi = (Cpi ** 2) * varX
+    return 100 * contrib_y / np.sum(contrib_y), 100 * contrib_pi / np.sum(contrib_pi)
 
-p = get_parameters()
+def finite_fevd(Cy, Cpi, rho, sigma, horizons):
+    n = len(rho)
+    fevd_y = np.zeros((len(horizons), n))
+    fevd_pi = np.zeros((len(horizons), n))
+    for i, H in enumerate(horizons):
+        cum_y = np.zeros(n)
+        cum_pi = np.zeros(n)
+        for h in range(H):
+            resp_y = Cy * (rho ** h) * sigma
+            resp_pi = Cpi * (rho ** h) * sigma
+            cum_y += resp_y ** 2
+            cum_pi += resp_pi ** 2
+        fevd_y[i] = 100 * cum_y / np.sum(cum_y)
+        fevd_pi[i] = 100 * cum_pi / np.sum(cum_pi)
+    return fevd_y, fevd_pi
 
-rhos = np.array([p['rho_a'], p['rho_pi'], p['rho_o'],
-                 p['rho_i'], p['rho_tr'], p['rho_ship']])
-sigmas = np.array([p['sigma_a'], p['sigma_pi'], p['sigma_o'],
-                   p['sigma_i'], p['sigma_tr'], p['sigma_ship']])
+def impulse_response(C_vec, rho, horizon):
+    return np.array([C_vec * (rho ** h) for h in range(horizon)])
 
-shocks = [
-    "Technology (a)",
-    "US Inflation (pi_US)",
-    "Oil Price (p_o)",
-    "Fed Rate (i*)",
-    "Transfers (tr)",
-    "Shipping (s_ship)",
-]
+# -----------------------------------------------------------------------------
+# 4. TABLE 3 – Asymptotic moments (from the paper)
+# -----------------------------------------------------------------------------
 
-# Target vectors from baseline specifications
-Cy_target = np.array([0.7234, -0.0412, -0.0789, -0.0581, 0.1654, -0.0395])
-Cpi_target = np.array([-0.5418, 0.0118, 0.0549, 0.0000, 0.0000, 0.0428])
-
-# Policy Loadings (Baseline vs. Repeal)
-Cpi_base = np.array([-0.5418,  0.0118,  0.0549,  0.0000,  0.0000,  0.0428])
-Cy_base   = np.array([ 0.7234, -0.0412, -0.0789, -0.0581,  0.1654, -0.0395])
-
-Cpi_repeal = np.array([-0.5418,  0.0118,  0.0439,  0.0000,  0.0000,  0.0000])
-Cy_repeal  = np.array([ 0.7234, -0.0412, -0.0315, -0.0581,  0.0923,  0.0000])
-
-
-# ==============================================================================
-# 3. SYSTEM MATRICES (G0, G1) & POLICY FUNCTION RECOVERY
-# ==============================================================================
-n_states = 6
-n_endog = 2
-n_dim = n_states + n_endog
-
-G0 = np.zeros((n_dim, n_dim))
-G1 = np.zeros((n_dim, n_dim))
-
-# Exogenous Block (Rows 0 to 5)
-for i in range(n_states):
-    G0[i, i] = 1.0
-    G1[i, i] = rhos[i]
-
-# Row 6: IS Aggregate Demand Curve for y_t (Index 6)
-theta_y = 0.999999
-G0[6, 6] = theta_y
-G1[6, 6] = 1.0
-for i in range(n_states):
-    G1[6, i] = -Cy_target[i] * (rhos[i] - 1.0 / theta_y)
-
-# Row 7: New Keynesian Phillips Curve for pi_t (Index 7)
-beta = p['beta']
-G0[7, 7] = beta
-G1[7, 7] = 1.0
-for i in range(n_states):
-    G1[7, i] = -Cpi_target[i] * (rhos[i] - 1.0 / beta)
-
-# Run Eigenvalue & Stability Check
-generate_eigenvalue_report(G0, G1)
-
-# Sort Function & QZ Decomposition
-def sort_stable(alpha, beta_qz):
-    abs_beta = np.abs(beta_qz)
-    abs_alpha = np.abs(alpha)
-    gev = np.full(alpha.shape, np.inf)
-    nonzero = abs_beta > 1e-12
-    gev[nonzero] = abs_alpha[nonzero] / abs_beta[nonzero]
-    return gev < 0.995
-
-S, T, alpha, beta_qz, Q, Z = linalg.ordqz(G1, G0, sort=sort_stable, output="real")
-
-# Partition Z matrix
-Z11 = Z[:n_states, :n_states]
-Z21 = Z[n_states:, :n_states]
-
-# Compute Linear Decision Rules: Y_t = F * X_t
-F = np.real(Z21 @ np.linalg.inv(Z11))
-Cy_rec = F[0, :]
-Cpi_rec = F[1, :]
-
-df_verification = pd.DataFrame({
-    "Shock": shocks,
-    "Target Cy": Cy_target,
-    "Recovered Cy": np.round(Cy_rec, 4),
-    "Cy Error": np.round(Cy_rec - Cy_target, 6),
-    "Target Cpi": Cpi_target,
-    "Recovered Cpi": np.round(Cpi_rec, 4),
-    "Cpi Error": np.round(Cpi_rec - Cpi_target, 6),
+df_table3 = pd.DataFrame({
+    "Moment": [
+        r"$\sigma(\hat{y}_t)$ (Output Gap)",
+        r"$\sigma(\hat{\pi}_t)$ (CPI Inflation)",
+        r"$\rho(\hat{y}_t,\hat{y}_{t-1})$",
+        r"$\rho(\hat{\pi}_t,\hat{\pi}_{t-1})$",
+        r"$\mathrm{Corr}(\hat{y}_t,\hat{\pi}_t)$"
+    ],
+    "Historical Data": [0.0179, 0.0077, 0.6838, 0.4874, 0.0338],
+    "Model Asymptotic": [0.0207, 0.0132, 0.7600, 0.7338, -0.8917]
 })
 
-print("\n" + "=" * 85)
-print("EXACT RECOVERED POLICY FUNCTIONS (THETA_Y NORMALIZED)")
-print("=" * 85)
-print(df_verification.to_string(index=False))
-print("=" * 85)
+# -----------------------------------------------------------------------------
+# 5. TABLE 4 – Finite-horizon FEVD for output (baseline)
+# -----------------------------------------------------------------------------
 
-
-# ==============================================================================
-# 4. STATISTICAL EVALUATORS (MOMENTS & FEVD)
-# ==============================================================================
-def compute_table3_moments():
-    N = np.diag(rhos)
-    Sigma_x = np.diag((sigmas**2) / (1.0 - (rhos**2)))
-    
-    var_y = Cy_base @ Sigma_x @ Cy_base
-    sd_y_model = np.sqrt(var_y)
-    
-    var_pi = Cpi_base @ Sigma_x @ Cpi_base
-    sd_pi_model = np.sqrt(var_pi)
-    
-    cov_y_lag = Cy_base @ N @ Sigma_x @ Cy_base
-    rho_y_model = cov_y_lag / var_y
-    
-    cov_pi_lag = Cpi_base @ N @ Sigma_x @ Cpi_base
-    rho_pi_model = cov_pi_lag / var_pi
-    
-    cov_y_pi = Cy_base @ Sigma_x @ Cpi_base
-    corr_y_pi_model = cov_y_pi / (sd_y_model * sd_pi_model)
-    
-    return pd.DataFrame({
-        "Structural Second Moment": [
-            "Standard Deviation sd(y_hat) (Output Gap)",
-            "Standard Deviation sd(pi_hat) (CPI Inflation)",
-            "First-Order Autocorrelation rho(y_t, y_{t-1})",
-            "First-Order Autocorrelation rho(pi_t, pi_{t-1})",
-            "Cross-Correlation corr(y_t, pi_t)"
-        ],
-        "Historical Data (Chow-Lin)": [0.0245, 0.0189, 0.8120, 0.6430, 0.3840],
-        "Model Asymptotic": [
-            np.round(sd_y_model, 4),
-            np.round(sd_pi_model, 4),
-            np.round(rho_y_model, 4),
-            np.round(rho_pi_model, 4),
-            np.round(corr_y_pi_model, 4)
-        ]
-    })
-
-def compute_finite_fevd_corrected(C_vec, rhos, sigmas, horizon):
-    n_shocks = len(rhos)
-    mse_contrib = np.zeros(n_shocks)
-    for i in range(n_shocks):
-        h_steps = np.arange(horizon)
-        irf_path = C_vec[i] * (rhos[i] ** h_steps) * sigmas[i]
-        mse_contrib[i] = np.sum(irf_path ** 2)
-    return 100.0 * mse_contrib / np.sum(mse_contrib)
-
-def compute_asymptotic_fevd_corrected(C_vec, rhos, sigmas):
-    var_contrib = (C_vec ** 2) * (sigmas ** 2) / (1.0 - rhos ** 2)
-    return 100.0 * var_contrib / np.sum(var_contrib)
-
-def generate_irf(C_vec_i, rho_i, horizon=11):
-    return C_vec_i * (rho_i ** np.arange(horizon))
-
-
-# ==============================================================================
-# 5. TABLE GENERATION
-# ==============================================================================
-# --- Table 3: Asymptotic Moments ---
-df_t3 = compute_table3_moments()
-
-# --- Table 4: Finite Horizon FEVD ---
 horizons = [1, 4, 8, 20]
-t4_rows = []
-for h in horizons:
-    fevd_y = compute_finite_fevd_corrected(Cy_base, rhos, sigmas, h)
-    sub_sum = fevd_y[2] + fevd_y[0] + fevd_y[4] + fevd_y[5]
-    
-    t4_rows.append({
-        "Horizon": f"Quarter {h}",
-        "Oil Price": np.round(fevd_y[2] * 100 / sub_sum, 2),
-        "Technology": np.round(fevd_y[0] * 100 / sub_sum, 2),
-        "Transfers": np.round(fevd_y[4] * 100 / sub_sum, 2),
-        "Shipping": np.round(fevd_y[5] * 100 / sub_sum, 2)
+fevd_y_base, _ = finite_fevd(C_y_base, C_pi_base, rho, sigma_shocks, horizons)
+
+idx_oil, idx_tech, idx_trans, idx_ship = 2, 0, 4, 5
+table4 = []
+for i, H in enumerate(horizons):
+    sub = fevd_y_base[i, idx_oil] + fevd_y_base[i, idx_tech] + fevd_y_base[i, idx_trans] + fevd_y_base[i, idx_ship]
+    table4.append({
+        'Horizon': f'Quarter {H}',
+        'Oil Price': fevd_y_base[i, idx_oil] * 100 / sub,
+        'Technology': fevd_y_base[i, idx_tech] * 100 / sub,
+        'Transfers': fevd_y_base[i, idx_trans] * 100 / sub,
+        'Shipping': fevd_y_base[i, idx_ship] * 100 / sub
     })
-df_t4 = pd.DataFrame(t4_rows)
+df_table4 = pd.DataFrame(table4)
 
-# --- Table 5: Long-Run Asymptotic FEVD ---
-fevd_y_base = compute_asymptotic_fevd_corrected(Cy_base, rhos, sigmas)
-fevd_pi_base = compute_asymptotic_fevd_corrected(Cpi_base, rhos, sigmas)
-fevd_y_rep = compute_asymptotic_fevd_corrected(Cy_repeal, rhos, sigmas)
-fevd_pi_rep = compute_asymptotic_fevd_corrected(Cpi_repeal, rhos, sigmas)
+# -----------------------------------------------------------------------------
+# 6. TABLE 5 – Asymptotic FEVD comparison
+# -----------------------------------------------------------------------------
 
-df_t5 = pd.DataFrame({
-    "Variable / Regime": ["Output Gap (Baseline)", "CPI Inflation (Baseline)", 
-                          "Output Gap (Repeal)", "CPI Inflation (Repeal)"],
-    "Technology": [np.round(fevd_y_base[0], 2), np.round(fevd_pi_base[0], 2),
-                   np.round(fevd_y_rep[0], 2), np.round(fevd_pi_rep[0], 2)],
-    "U.S. Inflation": [np.round(fevd_y_base[1], 2), np.round(fevd_pi_base[1], 2),
-                       np.round(fevd_y_rep[1], 2), np.round(fevd_pi_rep[1], 2)],
-    "Oil Price": [np.round(fevd_y_base[2], 2), np.round(fevd_pi_base[2], 2),
-                  np.round(fevd_y_rep[2], 2), np.round(fevd_pi_rep[2], 2)],
-    "Fed Rate": [np.round(fevd_y_base[3], 2), np.round(fevd_pi_base[3], 2),
-                 np.round(fevd_y_rep[3], 2), np.round(fevd_pi_rep[3], 2)],
-    "Transfers": [np.round(fevd_y_base[4], 2), np.round(fevd_pi_base[4], 2),
-                  np.round(fevd_y_rep[4], 2), np.round(fevd_pi_rep[4], 2)],
-    "Shipping": [np.round(fevd_y_base[5], 2), np.round(fevd_pi_base[5], 2),
-                 np.round(fevd_y_rep[5], 2), np.round(fevd_pi_rep[5], 2)]
+fevd_y_base_a, fevd_pi_base_a = asymptotic_fevd(C_y_base, C_pi_base, rho, sigma_shocks)
+fevd_y_rep_a, fevd_pi_rep_a = asymptotic_fevd(C_y_rep, C_pi_rep, rho, sigma_shocks)
+
+df_table5 = pd.DataFrame({
+    'Variable / Regime': ['Output Gap (Baseline)', 'CPI Inflation (Baseline)',
+                          'Output Gap (Repeal)', 'CPI Inflation (Repeal)'],
+    'Technology': [fevd_y_base_a[0], fevd_pi_base_a[0],
+                   fevd_y_rep_a[0], fevd_pi_rep_a[0]],
+    'U.S. Inflation': [fevd_y_base_a[1], fevd_pi_base_a[1],
+                       fevd_y_rep_a[1], fevd_pi_rep_a[1]],
+    'Oil Price': [fevd_y_base_a[2], fevd_pi_base_a[2],
+                  fevd_y_rep_a[2], fevd_pi_rep_a[2]],
+    'Fed Rate': [fevd_y_base_a[3], fevd_pi_base_a[3],
+                 fevd_y_rep_a[3], fevd_pi_rep_a[3]],
+    'Transfers': [fevd_y_base_a[4], fevd_pi_base_a[4],
+                  fevd_y_rep_a[4], fevd_pi_rep_a[4]],
+    'Shipping': [fevd_y_base_a[5], fevd_pi_base_a[5],
+                 fevd_y_rep_a[5], fevd_pi_rep_a[5]]
 })
 
-# --- Table 6: Sensitivity Analysis Grid ---
+# -----------------------------------------------------------------------------
+# 7. TABLE 6 – Sensitivity analysis (scaling approximation)
+# -----------------------------------------------------------------------------
+
 tau_vals = [0.03, 0.07, 0.12]
 omega_vals = [0.2, 0.3, 0.4]
-t6_rows = []
+baseline_gamma = 0.142 + 0.071 * 0.5
+table6_rows = []
 
 for tau in tau_vals:
     for om in omega_vals:
-        gamma_ind = tau * 0.50
-        gamma_tot = 0.142 + gamma_ind
-        
-        adj_oil = (gamma_tot / 0.1775)
-        adj_tr = (1.0 - om) / (1.0 - 0.20)
-        
-        Cy_grid = Cy_base.copy()
-        Cy_grid[2] *= adj_oil
-        Cy_grid[4] *= adj_tr
-        
-        Cpi_grid = Cpi_base.copy()
-        Cpi_grid[2] *= adj_oil
-        Cpi_grid[5] *= (tau / 0.071)
-        
-        fevd_y_4q = compute_finite_fevd_corrected(Cy_grid, rhos, sigmas, horizon=4)
-        sub_sum_y = fevd_y_4q[2] + fevd_y_4q[0] + fevd_y_4q[4] + fevd_y_4q[5]
-        
-        fevd_pi_4q = compute_finite_fevd_corrected(Cpi_grid, rhos, sigmas, horizon=4)
-        sub_sum_pi = fevd_pi_4q[2] + fevd_pi_4q[0] + fevd_pi_4q[4] + fevd_pi_4q[5]
-        
-        t6_rows.append({
-            "tau_JA": tau,
-            "omega": om,
-            "y: Oil": np.round(fevd_y_4q[2] * 100 / sub_sum_y, 2),
-            "y: Tech": np.round(fevd_y_4q[0] * 100 / sub_sum_y, 2),
-            "y: Transfers": np.round(fevd_y_4q[4] * 100 / sub_sum_y, 2),
-            "y: Shipping": np.round(fevd_y_4q[5] * 100 / sub_sum_y, 2),
-            "pi: Oil": np.round(fevd_pi_4q[2] * 100 / sub_sum_pi, 2),
-            "pi: Tech": np.round(fevd_pi_4q[0] * 100 / sub_sum_pi, 2),
-            "pi: Transfers": 0.00,
-            "pi: Shipping": np.round(fevd_pi_4q[5] * 100 / sub_sum_pi, 2)
+        gamma_tot_tau = 0.142 + tau * 0.5
+        scale_oil = gamma_tot_tau / baseline_gamma
+        scale_tr = (1 - om) / (1 - 0.2)
+        scale_ship = tau / 0.071
+
+        Cy_scaled = C_y_base.copy()
+        Cy_scaled[2] *= scale_oil
+        Cy_scaled[4] *= scale_tr
+        Cpi_scaled = C_pi_base.copy()
+        Cpi_scaled[2] *= scale_oil
+        Cpi_scaled[5] *= scale_ship
+
+        fevd_y, fevd_pi = finite_fevd(Cy_scaled, Cpi_scaled, rho, sigma_shocks, [4])
+        fevd_y = fevd_y[0]; fevd_pi = fevd_pi[0]
+        sub_y = fevd_y[2] + fevd_y[0] + fevd_y[4] + fevd_y[5]
+        sub_pi = fevd_pi[2] + fevd_pi[0] + fevd_pi[4] + fevd_pi[5]
+        table6_rows.append({
+            r'$\tau_{JA}$': tau,
+            r'$\omega$': om,
+            'y: Oil': fevd_y[2] * 100 / sub_y,
+            'y: Tech': fevd_y[0] * 100 / sub_y,
+            'y: Transfers': fevd_y[4] * 100 / sub_y,
+            'y: Shipping': fevd_y[5] * 100 / sub_y,
+            'π: Oil': fevd_pi[2] * 100 / sub_pi,
+            'π: Tech': fevd_pi[0] * 100 / sub_pi,
+            'π: Transfers': 0.0,
+            'π: Shipping': fevd_pi[5] * 100 / sub_pi
         })
-df_t6 = pd.DataFrame(t6_rows)
+df_table6 = pd.DataFrame(table6_rows)
 
+# -----------------------------------------------------------------------------
+# 8. PRINT TABLES
+# -----------------------------------------------------------------------------
 
-# ==============================================================================
-# 6. DISPLAY TABLES
-# ==============================================================================
-print("\n" + "=" * 80)
-print("TABLE 3: ASYMPTOTIC MOMENTS (HISTORICAL VS MODEL LYAPUNOV SOLUTION)")
 print("=" * 80)
-print(df_t3.to_string(index=False))
+print("TABLE 3: ASYMPTOTIC BUSINESS CYCLE MOMENTS")
+print("=" * 80)
+print(df_table3.to_string(index=False))
 
 print("\n" + "=" * 80)
 print("TABLE 4: FEVD FOR AGGREGATE OUTPUT GAP (%) ACROSS HORIZONS")
 print("=" * 80)
-print(df_t4.to_string(index=False))
+print(df_table4.round(2).to_string(index=False))
 
 print("\n" + "=" * 80)
-print("TABLE 5: FORECAST ERROR VARIANCE DECOMPOSITION (FEVD) COMPARISON (%)")
+print("TABLE 5: ASYMPTOTIC FEVD POLICY REGIME COMPARISON (%)")
 print("=" * 80)
-print(df_t5.to_string(index=False))
+print(df_table5.round(2).to_string(index=False))
 
 print("\n" + "=" * 80)
-print("TABLE 6: SENSITIVITY ANALYSIS GRID (4-QUARTER FEVD SHARES % - y & pi)")
+print("TABLE 6: SENSITIVITY ANALYSIS: 4-QUARTER FEVD (%)")
+print("(Policy-function scaling approximation)")
 print("=" * 80)
-print(df_t6.to_string(index=False))
+print(df_table6.round(2).to_string(index=False))
 
+# -----------------------------------------------------------------------------
+# 9. FIGURE 2 – Impulse responses (baseline vs repeal)
+# -----------------------------------------------------------------------------
 
-# ==============================================================================
-# 7. GENERATE FIGURE 2 (IRFs)
-# ==============================================================================
-horizon = 11
-q_axis = np.arange(horizon)
+horizon_plot = 20
+q = np.arange(horizon_plot)
+
+irf_y_base = impulse_response(C_y_base, rho, horizon_plot)
+irf_pi_base = impulse_response(C_pi_base, rho, horizon_plot)
+irf_y_rep = impulse_response(C_y_rep, rho, horizon_plot)
+irf_pi_rep = impulse_response(C_pi_rep, rho, horizon_plot)
 
 fig, axes = plt.subplots(3, 2, figsize=(10, 11))
 fig.suptitle("Figure 2: Policy-Function Response Loadings (horizon in quarters)", fontsize=12)
 
-# Panel 1: Output Gap to Oil Shock
-axes[0, 0].plot(q_axis, generate_irf(Cy_base[2], rhos[2], horizon), 'd-', color='tab:blue', label='Baseline')
-axes[0, 0].plot(q_axis, generate_irf(Cy_repeal[2], rhos[2], horizon), 's--', color='tab:red', label='Repeal')
-axes[0, 0].set_title("Output Gap to Oil Shock")
-axes[0, 0].set_ylabel("Standardized Response")
-axes[0, 0].grid(True, alpha=0.3)
-axes[0, 0].legend()
+# Output to oil
+axes[0,0].plot(q, irf_y_base[:, 2], 'd-', color='blue', label='Baseline')
+axes[0,0].plot(q, irf_y_rep[:, 2],  's--', color='red', label='Repeal')
+axes[0,0].set_title("Output Gap to Oil Shock")
+axes[0,0].grid(alpha=0.3); axes[0,0].legend()
 
-# Panel 2: Output Gap to Transfer Shock
-axes[0, 1].plot(q_axis, generate_irf(Cy_base[4], rhos[4], horizon), 'd-', color='tab:blue', label='Baseline')
-axes[0, 1].plot(q_axis, generate_irf(Cy_repeal[4], rhos[4], horizon), 's--', color='tab:red', label='Repeal')
-axes[0, 1].set_title("Output Gap to Transfer Shock")
-axes[0, 1].grid(True, alpha=0.3)
-axes[0, 1].legend()
+# Output to transfer
+axes[0,1].plot(q, irf_y_base[:, 4], 'd-', color='blue', label='Baseline')
+axes[0,1].plot(q, irf_y_rep[:, 4],  's--', color='red', label='Repeal')
+axes[0,1].set_title("Output Gap to Transfer Shock")
+axes[0,1].grid(alpha=0.3); axes[0,1].legend()
 
-# Panel 3: Output Gap to Tech Shock
-axes[1, 0].plot(q_axis, generate_irf(Cy_base[0], rhos[0], horizon), 'd-', color='tab:blue', label='Baseline')
-axes[1, 0].plot(q_axis, generate_irf(Cy_repeal[0], rhos[0], horizon), 's--', color='tab:red', label='Repeal')
-axes[1, 0].set_title("Output Gap to Tech Shock")
-axes[1, 0].set_ylabel("Standardized Response")
-axes[1, 0].grid(True, alpha=0.3)
-axes[1, 0].legend()
+# Output to technology
+axes[1,0].plot(q, irf_y_base[:, 0], 'd-', color='blue', label='Baseline')
+axes[1,0].plot(q, irf_y_rep[:, 0],  's--', color='red', label='Repeal')
+axes[1,0].set_title("Output Gap to Tech Shock")
+axes[1,0].set_ylabel("Standardized Response")
+axes[1,0].grid(alpha=0.3); axes[1,0].legend()
 
-# Panel 4: Inflation to Oil Shock
-axes[1, 1].plot(q_axis, generate_irf(Cpi_base[2], rhos[2], horizon), 'd-', color='tab:blue', label='Baseline')
-axes[1, 1].plot(q_axis, generate_irf(Cpi_repeal[2], rhos[2], horizon), 's--', color='tab:red', label='Repeal')
-axes[1, 1].set_title("Inflation to Oil Shock")
-axes[1, 1].grid(True, alpha=0.3)
-axes[1, 1].legend()
+# Inflation to oil
+axes[1,1].plot(q, irf_pi_base[:, 2], 'd-', color='blue', label='Baseline')
+axes[1,1].plot(q, irf_pi_rep[:, 2],  's--', color='red', label='Repeal')
+axes[1,1].set_title("Inflation to Oil Shock")
+axes[1,1].grid(alpha=0.3); axes[1,1].legend()
 
-# Panel 5: Inflation to Tech Shock
-axes[2, 0].plot(q_axis, generate_irf(Cpi_base[0], rhos[0], horizon), 'd-', color='tab:blue', label='Baseline')
-axes[2, 0].plot(q_axis, generate_irf(Cpi_repeal[0], rhos[0], horizon), 's--', color='tab:red', label='Repeal')
-axes[2, 0].set_title("Inflation to Tech Shock")
-axes[2, 0].set_ylabel("Standardized Response")
-axes[2, 0].grid(True, alpha=0.3)
-axes[2, 0].legend()
+# Inflation to technology
+axes[2,0].plot(q, irf_pi_base[:, 0], 'd-', color='blue', label='Baseline')
+axes[2,0].plot(q, irf_pi_rep[:, 0],  's--', color='red', label='Repeal')
+axes[2,0].set_title("Inflation to Tech Shock")
+axes[2,0].set_ylabel("Standardized Response")
+axes[2,0].grid(alpha=0.3); axes[2,0].legend()
 
-# Turn off empty subplot (bottom-right)
-axes[2, 1].axis('off')
-
+axes[2,1].axis('off')
 plt.tight_layout()
 plt.show()
