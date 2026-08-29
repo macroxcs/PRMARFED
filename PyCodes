@@ -1,5 +1,9 @@
+# Solves the undetermined-coefficients system with output-gap feedback
+# into the NKPC (ψ_y). Produces the baseline and repeal policy vectors
+# used in the paper.
+
 ===========
-policy vectors
+# policy vectors
 
 ============
 
@@ -101,7 +105,7 @@ C_pi_b, C_y_b = solve_policy(tau_JA=0.071, psi_s=0.30, label="BASELINE")
 C_pi_r, C_y_r = solve_policy(tau_JA=0.000, psi_s=0.00, label="REPEAL")
 
 ===================================
-Asymptotic Business Cycle Moments
+# Asymptotic Business Cycle Moments
 ===================================
 
 import numpy as np
@@ -157,7 +161,7 @@ for n, s in zip(names, share_y):
 
 =====================
 
-FEVD and IRF
+# FEVD and IRF
 
 ===================
 
